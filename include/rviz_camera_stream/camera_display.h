@@ -120,7 +120,11 @@ private:
   ros::ServiceServer trigger_service_;
   bool triggerCallback(std_srvs::TriggerRequest& req, std_srvs::TriggerResponse& res);
   bool trigger_activated_ = false;
-  ros::Time last_image_publication_time_ = ros::Time(0);
+  bool publication_schedule_initialized_ = false;
+  double next_image_publication_time_sec_ = 0.0;
+
+  bool shouldPublishFrame(float frame_rate, bool triggered);
+  void resetPublicationSchedule();
 
   void caminfoCallback(const sensor_msgs::CameraInfo::ConstPtr& msg);
 

@@ -56,6 +56,8 @@
 #include <image_transport/camera_common.h>
 #include <image_transport/image_transport.h>
 #include <sensor_msgs/image_encodings.h>
+#include <chrono>
+#include <cmath>
 #include <string>
 #include <tf/transform_listener.h>
 
@@ -347,21 +349,14 @@ void CameraPub::preRenderTargetUpdate(const Ogre::RenderTargetEvent& evt)
 void CameraPub::postRenderTargetUpdate(const Ogre::RenderTargetEvent& evt)
 {
   // Publish the rendered window video stream
-  const ros::Time cur_time = ros::Time::now();
-  ros::Duration elapsed_duration = cur_time - last_image_publication_time_;
   const float frame_rate = frame_rate_property_->getFloat();
-  bool time_is_up = (frame_rate > 0.0) && (elapsed_duration.toSec() > 1.0 / frame_rate);
-  // We want frame rate to be unlimited if we enter zero or negative values for frame rate
-  if (frame_rate < 0.0)
-  {
-    time_is_up = true;
-  }
-  if (!(trigger_activated_ || time_is_up))
+  const bool triggered = trigger_activated_;
+  trigger_activated_ = false;
+
+  if (!shouldPublishFrame(frame_rate, triggered))
   {
     return;
   }
-  trigger_activated_ = false;
-  last_image_publication_time_ = cur_time;
   render_texture_->getViewport(0)->setBackgroundColour(background_color_property_->getOgreColor());
 
   std::string frame_id;
@@ -377,6 +372,53 @@ void CameraPub::postRenderTargetUpdate(const Ogre::RenderTargetEvent& evt)
 
   // render_texture_->update();
   video_publisher_->publishFrame(render_texture_, frame_id, encoding_option);
+}
+
+bool CameraPub::shouldPublishFrame(float frame_rate, bool triggered)
+{
+  // A negative rate preserves the existing unlimited behavior. A zero rate
+  // only publishes frames requested through the trigger service.
+  if (frame_rate < 0.0f)
+  {
+    return true;
+  }
+  if (frame_rate == 0.0f)
+  {
+    return triggered;
+  }
+
+  using SteadyClock = std::chrono::steady_clock;
+  const double now_sec = std::chrono::duration<double>(
+                           SteadyClock::now().time_since_epoch()).count();
+  const double period_sec = 1.0 / static_cast<double>(frame_rate);
+
+  // Publish immediately when starting or when explicitly triggered, then
+  // schedule the next frame from this point.
+  if (!publication_schedule_initialized_ || triggered)
+  {
+    publication_schedule_initialized_ = true;
+    next_image_publication_time_sec_ = now_sec + period_sec;
+    return true;
+  }
+
+  if (now_sec < next_image_publication_time_sec_)
+  {
+    return false;
+  }
+
+  // Advance from the planned deadline instead of from now. This preserves the
+  // requested long-term average for rates that are not divisors of RViz's
+  // render rate. Skip missed deadlines rather than publishing a burst.
+  const double overdue_sec = now_sec - next_image_publication_time_sec_;
+  const double elapsed_periods = std::floor(overdue_sec / period_sec) + 1.0;
+  next_image_publication_time_sec_ += elapsed_periods * period_sec;
+  return true;
+}
+
+void CameraPub::resetPublicationSchedule()
+{
+  publication_schedule_initialized_ = false;
+  next_image_publication_time_sec_ = 0.0;
 }
 
 void CameraPub::onEnable()
@@ -456,6 +498,7 @@ void CameraPub::updateQueueSize()
 
 void CameraPub::updateFrameRate()
 {
+  resetPublicationSchedule();
 }
 
 void CameraPub::updateNearClipDistance()
@@ -506,6 +549,7 @@ void CameraPub::updateImageEncoding()
 
 void CameraPub::clear()
 {
+  resetPublicationSchedule();
   force_render_ = true;
   context_->queueRender();
 
