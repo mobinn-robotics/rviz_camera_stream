@@ -12,18 +12,32 @@
 
   <url type="website">https://github.com/lucasw/rviz_camera_stream</url>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>image_transport</build_depend>
-  <build_depend>roscpp</build_depend>
-  <build_depend>roslint</build_depend>
-  <build_depend>rviz</build_depend>
+  <build_depend>libboost-thread-dev</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>qtbase5-dev</build_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rviz_common</build_depend>
+  <build_depend>rviz_ogre_vendor</build_depend>
+  <build_depend>rviz_rendering</build_depend>
   <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
 
-  <run_depend>roscpp</run_depend>
-  <run_depend>rviz</run_depend>
-  <run_depend>tf</run_depend>
+  <run_depend>image_transport</run_depend>
+  <run_depend>libboost-thread</run_depend>
+  <run_depend>pluginlib</run_depend>
+  <run_depend>rclcpp</run_depend>
+  <run_depend>rviz2</run_depend>
+  <run_depend>rviz_common</run_depend>
+  <run_depend>rviz_default_plugins</run_depend>
+  <run_depend>rviz_ogre_vendor</run_depend>
+  <run_depend>rviz_rendering</run_depend>
+  <run_depend>sensor_msgs</run_depend>
+  <run_depend>std_srvs</run_depend>
+  <run_depend>tf2_ros</run_depend>
 
   <export>
-      <rviz plugin="${prefix}/plugin_description.xml"/>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

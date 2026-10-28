@@ -1,83 +1,72 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.8)
 project(rviz_camera_stream)
 
-find_package(catkin REQUIRED COMPONENTS
-  image_transport
-  roscpp
-  roslint
-  rviz
-  sensor_msgs
-)
+find_package(ament_cmake REQUIRED)
+find_package(image_transport REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rviz_common REQUIRED)
+find_package(rviz_ogre_vendor REQUIRED)
+find_package(rviz_rendering REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(Boost REQUIRED COMPONENTS thread)
 
-roslint_cpp()
 ## Compiler flags
 # if(CMAKE_COMPILER_IS_GNUCXX)
 #  set(CMAKE_CXX_FLAGS "-std=c++0x")  ## Enable C++11
 # endif()
 # set(CMAKE_CXX_FLAGS "-Wall -Werror ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "-Wall ${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_STANDARD 17)
 
 ## This plugin includes Qt widgets, so we must include Qt.
-## We'll use the version that rviz used so they are compatible.
-if(rviz_QT_VERSION VERSION_LESS "5")
-  message(STATUS "Using Qt4 based on the rviz_QT_VERSION: ${rviz_QT_VERSION}")
-  find_package(Qt4 ${rviz_QT_VERSION} EXACT REQUIRED QtCore QtGui)
-  ## pull in all required include dirs, define QT_LIBRARIES, etc.
-  include(${QT_USE_FILE})
-else()
-  message(STATUS "Using Qt5 based on the rviz_QT_VERSION: ${rviz_QT_VERSION}")
-  # find_package(Qt5 ${rviz_QT_VERSION} EXACT REQUIRED Core Widgets)
-  find_package(Qt5 ${rviz_QT_VERSION} REQUIRED Core Widgets)
-  ## make target_link_libraries(${QT_LIBRARIES}) pull in all required dependencies
-  set(QT_LIBRARIES Qt5::Widgets)
-endif()
+## rviz2 uses Qt5.
+find_package(Qt5 REQUIRED Core Widgets)
+## make target_link_libraries(${QT_LIBRARIES}) pull in all required dependencies
+set(QT_LIBRARIES Qt5::Widgets)
 
 ## Avoid defining "emit", "slots",
 ## etc for Qt signals because they can conflict with boost signals
 add_definitions(-DQT_NO_KEYWORDS)
 
-catkin_package(
-  CATKIN_DEPENDS
-  roscpp
-  rviz
+qt5_wrap_cpp(MOC_FILES
+  include/${PROJECT_NAME}/camera_display.h
 )
 
-include_directories(
-  include
-  ${catkin_INCLUDE_DIRS}
-)
-
-if(rviz_QT_VERSION VERSION_LESS "5")
-  qt4_wrap_cpp(MOC_FILES
-    include/${PROJECT_NAME}/camera_display.h
-  )
-else()
-  qt5_wrap_cpp(MOC_FILES
-    include/${PROJECT_NAME}/camera_display.h
-  )
-endif()
-
-add_library(${PROJECT_NAME}
+add_library(${PROJECT_NAME} SHARED
   src/camera_display.cpp
   ${MOC_FILES}
 )
 
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 target_link_libraries(${PROJECT_NAME}
-  ${catkin_LIBRARIES}
+  image_transport::image_transport
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  rviz_common::rviz_common
+  rviz_ogre_vendor::OgreMain
+  rviz_rendering::rviz_rendering
+  ${sensor_msgs_TARGETS}
+  ${std_srvs_TARGETS}
+  Boost::thread
   ${QT_LIBRARIES}
 )
 
+pluginlib_export_plugin_description_file(rviz_common plugin_description.xml)
+
 # install
 install (TARGETS ${PROJECT_NAME}
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 
-install(FILES
-  plugin_description.xml
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-)
+install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
+install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
 
-install(DIRECTORY config/ DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config)
-install(DIRECTORY launch/ DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch)
+ament_package()

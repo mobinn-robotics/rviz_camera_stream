@@ -39,10 +39,12 @@
 #include <OgreSharedPtr.h>
 #include <OgreTexture.h>
 
-# include <sensor_msgs/CameraInfo.h>
+#include <boost/thread/mutex.hpp>
+#include <rclcpp/rclcpp.hpp>
+# include <sensor_msgs/msg/camera_info.hpp>
 
-# include "rviz/image/image_display_base.h"
-#include <std_srvs/Trigger.h>
+# include "rviz_common/display.hpp"
+#include <std_srvs/srv/trigger.hpp>
 #endif
 
 namespace Ogre
@@ -58,16 +60,36 @@ namespace video_export
 class  VideoPublisher;
 }
 
-namespace rviz
+namespace rviz_common
 {
-
+class RenderPanel;
+namespace properties
+{
 class EnumProperty;
 class FloatProperty;
 class IntProperty;
-class RenderPanel;
 class RosTopicProperty;
 class DisplayGroupVisibilityProperty;
 class ColorProperty;
+class StringProperty;
+class QosProfileProperty;
+}  // namespace properties
+}  // namespace rviz_common
+
+namespace rviz
+{
+
+// ROS2: rviz classes moved to the rviz_common namespaces
+using rviz_common::Display;
+using rviz_common::RenderPanel;
+using rviz_common::properties::EnumProperty;
+using rviz_common::properties::FloatProperty;
+using rviz_common::properties::IntProperty;
+using rviz_common::properties::RosTopicProperty;
+using rviz_common::properties::DisplayGroupVisibilityProperty;
+using rviz_common::properties::ColorProperty;
+using rviz_common::properties::StringProperty;
+using rviz_common::properties::QosProfileProperty;
 
 /**
  * \class CameraPub
@@ -112,27 +134,35 @@ private Q_SLOTS:
 
 private:
   std::string camera_trigger_name_;
-  ros::NodeHandle nh_;
+  // ROS2: namespace of the ROS1 ros::NodeHandle (Display namespace property)
+  std::string nh_;
 
   void subscribe();
   void unsubscribe();
 
-  ros::ServiceServer trigger_service_;
-  bool triggerCallback(std_srvs::TriggerRequest& req, std_srvs::TriggerResponse& res);
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_service_;
+  bool triggerCallback(std_srvs::srv::Trigger::Request& req, std_srvs::srv::Trigger::Response& res);
   bool trigger_activated_ = false;
-  ros::Time last_image_publication_time_ = ros::Time(0);
+  rclcpp::Time last_image_publication_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
 
-  void caminfoCallback(const sensor_msgs::CameraInfo::ConstPtr& msg);
+  void caminfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr& msg);
 
   bool updateCamera();
 
   void clear();
   void updateStatus();
 
-  ros::Subscriber caminfo_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr caminfo_sub_;
+  // ROS2: ROS1 ros::Subscriber::getTopic() still returned the topic after shutdown()
+  std::string caminfo_sub_topic_;
 
   RosTopicProperty* topic_property_;
   RosTopicProperty* camera_info_property_;
+  // ROS2: QoS of the image publisher and the camera info subscription (default = ROS1 queue size 1)
+  QosProfileProperty* topic_qos_property_;
+  QosProfileProperty* camera_info_qos_property_;
+  rclcpp::QoS topic_qos_profile_ = rclcpp::QoS(1);
+  rclcpp::QoS camera_info_qos_profile_ = rclcpp::QoS(1);
   DisplayGroupVisibilityProperty* visibility_property_;
   IntProperty* queue_size_property_;
   StringProperty* namespace_property_;
@@ -142,7 +172,7 @@ private:
   EnumProperty* image_encoding_property_;
   FloatProperty* near_clip_property_;
 
-  sensor_msgs::CameraInfo::ConstPtr current_caminfo_;
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr current_caminfo_;
   boost::mutex caminfo_mutex_;
 
   bool new_caminfo_ = false;
@@ -160,6 +190,8 @@ private:
   // render to texture
   // from http://www.ogre3d.org/tikiwiki/tiki-index.php?page=Intermediate+Tutorial+7
   Ogre::Camera* camera_;
+  // ROS2 (Ogre 1.12): the camera is moved through a scene node instead of the deprecated Camera::setPosition
+  Ogre::SceneNode* camera_node_;
   Ogre::TexturePtr rtt_texture_;
   Ogre::RenderTexture* render_texture_;
 };
