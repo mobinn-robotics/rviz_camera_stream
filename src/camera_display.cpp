@@ -61,6 +61,9 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <rosidl_runtime_cpp/traits.hpp>
 #include <rclcpp/expand_topic_or_service_name.hpp>
+#include <rviz_common/properties/bool_property.hpp>
+#include <mobinn_shm/shm_producer.hpp>
+#include <memory>
 #include <string>
 
 #include "rviz_camera_stream/camera_display.h"
@@ -75,6 +78,8 @@ private:
   std::string nh_;
   image_transport::ImageTransport it_;
   image_transport::CameraPublisher pub_;
+  // SHM: when set, frames go to the mobinn_shm segment instead of the image topic
+  std::unique_ptr<mobinn::shm::ShmProducer> shm_producer_;
   uint image_id_;
 public:
   sensor_msgs::msg::CameraInfo camera_info_;
@@ -87,12 +92,16 @@ public:
 
   std::string get_topic()
   {
+    if (shm_producer_)
+    {
+      return "/dev/shm/" + shm_producer_->get_config().shm_name;
+    }
     return pub_.getTopic();
   }
 
   bool is_active()
   {
-    return !pub_.getTopic().empty();
+    return !pub_.getTopic().empty() || shm_producer_;
   }
 
   void setNodehandle(const std::string& nh)
@@ -107,6 +116,18 @@ public:
     {
       pub_.shutdown();
     }
+    // SHM: owner_unlink removes the segment
+    shm_producer_.reset();
+  }
+
+  // SHM: create the segment in place of the image topic. Throws when it cannot be created
+  // (config not found, another producer with the same shm name, /dev/shm full)
+  const ShmConfig& advertiseShm(const std::string& config)
+  {
+    // subscribe() can run again without unsubscribe() (onEnable), so release the old segment first
+    shm_producer_.reset();
+    shm_producer_ = mobinn::shm::ShmProducer::create_from_config(config, "rviz_image.yaml", true);
+    return shm_producer_->get_config();
   }
 
   void advertise(std::string topic, const rclcpp::QoS& qos)
@@ -123,7 +144,7 @@ public:
   // bool publishFrame(Ogre::RenderWindow * render_object, const std::string frame_id)
   bool publishFrame(Ogre::RenderTexture * render_object, const std::string frame_id, int encoding_option)
   {
-    if (pub_.getTopic() == "")
+    if (pub_.getTopic() == "" && !shm_producer_)
     {
       return false;
     }
@@ -190,9 +211,33 @@ public:
     image.data.resize(datasize);
     memcpy(&image.data[0], data, datasize);
     camera_info_.header = image.header;
-    pub_.publish(image, camera_info_);
-
     OGRE_FREE(data, Ogre::MEMCATEGORY_RENDERSYS);
+
+    if (shm_producer_)
+    {
+      return writeShm(image);
+    }
+    pub_.publish(image, camera_info_);
+    return true;
+  }
+
+private:
+  // SHM: consumers rebuild the image from the config, so a frame of another size or encoding is dropped
+  bool writeShm(const sensor_msgs::msg::Image& image)
+  {
+    const ShmConfig& cfg = shm_producer_->get_config();
+    if (image.width != cfg.width || image.height != cfg.height || image.step != cfg.step ||
+        image.encoding != cfg.encoding)
+    {
+      RCLCPP_ERROR_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+          "frame %ux%u step=%u %s != SHM config %ux%u step=%u %s; dropped "
+          "(fix Camera Info size / Image Encoding or the mobinn_shm config)",
+          image.width, image.height, image.step, image.encoding.c_str(),
+          cfg.width, cfg.height, cfg.step, cfg.encoding.c_str());
+      return false;
+    }
+    const uint64_t stamp_ns = static_cast<uint64_t>(rclcpp::Time(image.header.stamp).nanoseconds());
+    shm_producer_->write_frame(image.data.data(), static_cast<uint32_t>(image.data.size()), stamp_ns);
     return true;
   }
 };
@@ -271,6 +316,15 @@ CameraPub::CameraPub()
   near_clip_property_ = new FloatProperty("Near Clip Distance", 0.01, "Set the near clip distance",
       this, SLOT(updateNearClipDistance()));
   near_clip_property_->setMin(0.01);
+
+  // SHM: only one of the image topic and the segment is used
+  enable_shm_property_ = new BoolProperty("Enable SHM", false,
+      "Write the image to the mobinn_shm segment of SHM Config instead of publishing Image Topic.",
+      this, SLOT(updateTopic()));
+  shm_config_property_ = new StringProperty("SHM Config", "rviz_image.yaml",
+      "mobinn_shm config: file name in share/mobinn_shm/config or a path. "
+      "Its width/height/encoding must match Camera Info and Image Encoding.",
+      this, SLOT(updateTopic()));
 }
 
 CameraPub::~CameraPub()
@@ -486,8 +540,33 @@ void CameraPub::subscribe()
     setStatus(StatusProperty::Error, "Camera Info", QString("Error subscribing: ") + e.what());
   }
 
-  video_publisher_->advertise(topic_name, topic_qos_profile_);
-  setStatus(StatusProperty::Ok, "Output Topic", "Topic set");
+  if (!enable_shm_property_->getBool())
+  {
+    deleteStatus("SHM");
+    video_publisher_->advertise(topic_name, topic_qos_profile_);
+    setStatus(StatusProperty::Ok, "Output Topic", "Topic set");
+    return;
+  }
+
+  // SHM: no fallback to the topic when the segment cannot be created, so a consumer is not left waiting silently
+  const std::string shm_config = shm_config_property_->getStdString();
+  try
+  {
+    const ShmConfig& cfg = video_publisher_->advertiseShm(shm_config);
+    std::stringstream ss;
+    ss << "/dev/shm/" << cfg.shm_name << " (" << cfg.width << "x" << cfg.height << " " << cfg.encoding
+       << ", ring=" << cfg.ring_size << "); Image Topic disabled";
+    setStatus(StatusProperty::Ok, "SHM", QString::fromStdString(ss.str()));
+    setStatus(StatusProperty::Ok, "Output Topic", "SHM");
+    RCLCPP_INFO(node->get_logger(), "CameraPub SHM output: %s (config=%s)", ss.str().c_str(), shm_config.c_str());
+  }
+  catch (const std::exception& e)
+  {
+    setStatus(StatusProperty::Error, "SHM", QString("Could not create the segment (config=") +
+              QString::fromStdString(shm_config) + "): " + e.what());
+    RCLCPP_ERROR(node->get_logger(), "CameraPub SHM could not be created (config=%s): %s",
+                 shm_config.c_str(), e.what());
+  }
 }
 
 void CameraPub::unsubscribe()

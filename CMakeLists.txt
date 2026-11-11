@@ -11,6 +11,7 @@ find_package(rviz_rendering REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
+find_package(mobinn_shm REQUIRED)
 
 ## Compiler flags
 # if(CMAKE_COMPILER_IS_GNUCXX)
@@ -56,6 +57,8 @@ target_link_libraries(${PROJECT_NAME}
   Boost::thread
   ${QT_LIBRARIES}
 )
+# SHM: mobinn_shm exports plain libraries (no CMake targets)
+ament_target_dependencies(${PROJECT_NAME} mobinn_shm)
 
 pluginlib_export_plugin_description_file(rviz_common plugin_description.xml)
 

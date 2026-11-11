@@ -73,6 +73,7 @@ class DisplayGroupVisibilityProperty;
 class ColorProperty;
 class StringProperty;
 class QosProfileProperty;
+class BoolProperty;
 }  // namespace properties
 }  // namespace rviz_common
 
@@ -90,6 +91,7 @@ using rviz_common::properties::DisplayGroupVisibilityProperty;
 using rviz_common::properties::ColorProperty;
 using rviz_common::properties::StringProperty;
 using rviz_common::properties::QosProfileProperty;
+using rviz_common::properties::BoolProperty;
 
 /**
  * \class CameraPub
@@ -171,6 +173,9 @@ private:
   ColorProperty* background_color_property_;
   EnumProperty* image_encoding_property_;
   FloatProperty* near_clip_property_;
+  // SHM: write the image to a mobinn_shm segment in place of the Image Topic
+  BoolProperty* enable_shm_property_;
+  StringProperty* shm_config_property_;
 
   sensor_msgs::msg::CameraInfo::ConstSharedPtr current_caminfo_;
   boost::mutex caminfo_mutex_;
